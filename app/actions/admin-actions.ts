@@ -47,7 +47,6 @@ export async function getUsers() {
 
 export async function getUserHistory() {
   try {
-    
     if (!isSupabaseConfigured()) {
       return {
         history: [
@@ -164,17 +163,7 @@ export async function getUserHistory() {
 
     const { data: historyData, error: historyError } = await supabase
       .from("user_history")
-      .select(`
-        *,
-        profiles:user_id (
-          first_name,
-          last_name,
-          email
-        ),
-        learning_materials:resource_id (
-          title
-        )
-      `)
+      .select("*")
       .order('created_at', { ascending: false })
 
     if (historyError) {
@@ -182,7 +171,65 @@ export async function getUserHistory() {
       return { history: [], error: historyError }
     }
 
-    return { history: historyData || [], error: null }
+    if (!historyData || historyData.length === 0) {
+      return { history: [], error: null }
+    }
+
+    const userIds = [...new Set(historyData.map((item) => item.user_id))]
+
+    const materialIds = [...new Set(
+      historyData
+        .filter(item => item.resource_type === 'learning_material' && item.resource_id)
+        .map(item => item.resource_id)
+    )]
+
+    let profilesData = []
+    if (userIds.length > 0) {
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("user_id, first_name, last_name, email")
+        .in("user_id", userIds)
+
+      if (profilesError) {
+        console.error("Error getting user profiles:", profilesError)
+      } else {
+        profilesData = profiles || []
+      }
+    }
+
+    let materialsData = []
+    if (materialIds.length > 0) {
+      const { data: materials, error: materialsError } = await supabase
+        .from("learning_materials")
+        .select("id, title")
+        .in("id", materialIds)
+
+      if (materialsError) {
+        console.error("Error getting learning materials:", materialsError)
+      } else {
+        materialsData = materials || []
+      }
+    }
+
+    const profilesMap = profilesData.reduce((map, profile) => {
+      map[profile.user_id] = profile
+      return map
+    }, {} as Record<string, any>)
+
+    const materialsMap = materialsData.reduce((map, material) => {
+      map[material.id] = material
+      return map
+    }, {} as Record<string, any>)
+
+    const combinedHistory = historyData.map((item) => ({
+      ...item,
+      profiles: profilesMap[item.user_id] || null,
+      learning_materials: item.resource_type === 'learning_material' && item.resource_id 
+        ? materialsMap[item.resource_id] || null 
+        : null,
+    }))
+
+    return { history: combinedHistory, error: null }
   } catch (error) {
     console.error("Error in getUserHistory:", error)
     return { history: [], error }
